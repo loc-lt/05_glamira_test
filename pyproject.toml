@@ -4,7 +4,12 @@ version = "0.1.0"
 description = "Glamira Project 05 — data source exploration, ingest, and enrichment"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "beautifulsoup4>=4.15.0",
+    "httpx>=0.28.1",
+    "ip2location>=8.11",
+    "pymongo>=4.19.0",
+]
 
 [tool.uv]
 package = false

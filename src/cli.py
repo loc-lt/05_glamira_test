@@ -8,8 +8,11 @@ import sys
 from pathlib import Path
 
 from src.config import Settings
+from src.enrich.crawl import crawl_seed
+from src.enrich.ip_lookup import load_ip_geo
 from src.explore.profile import profile_tar
 from src.explore.render import render_data_dictionary, render_null_profile, render_quality_report
+from src.ingest.load_mongo import load_tar
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -34,6 +37,26 @@ def main(argv: list[str] | None = None) -> int:
     quality_cmd.add_argument("--dictionary-out", default="docs/data_dictionary.md")
     quality_cmd.add_argument("--stats-out", default="data/staging/profile_stats.json")
     quality_cmd.set_defaults(handler=_quality_report)
+
+    ingest = sub.add_parser("ingest", help="Load the mongodump into MongoDB")
+    ingest_cmds = ingest.add_subparsers(dest="command", required=True)
+    load_cmd = ingest_cmds.add_parser("load-mongo", help="Stream summary.bson into glamira_raw")
+    _add_scan_args(load_cmd)
+    load_cmd.add_argument("--limit", type=int, default=0, help="Stop after N documents. 0 loads the member.")
+    load_cmd.set_defaults(handler=_load_mongo)
+
+    enrich = sub.add_parser("enrich", help="IP lookup and product crawl")
+    enrich_cmds = enrich.add_subparsers(dest="command", required=True)
+    ip_cmd = enrich_cmds.add_parser("ip", help="Lookup distinct IPs and write coverage")
+    ip_cmd.add_argument("--counts", default="data/staging/ip_event_counts.tsv")
+    ip_cmd.add_argument("--checkout-counts", default="data/staging/checkout_success_ips.tsv")
+    ip_cmd.add_argument("--out", default="docs/ip_coverage.md")
+    ip_cmd.set_defaults(handler=_enrich_ip)
+    crawl_cmd = enrich_cmds.add_parser("crawl", help="Fetch canonical product pages")
+    crawl_cmd.add_argument("--seed", default="data/exports/product_urls.csv")
+    crawl_cmd.add_argument("--limit", type=int, default=100)
+    crawl_cmd.add_argument("--out", default="docs/crawl_pilot.md")
+    crawl_cmd.set_defaults(handler=_enrich_crawl)
 
     args = parser.parse_args(argv)
     try:
@@ -97,6 +120,55 @@ def _quality_report(args: argparse.Namespace) -> int:
     print(
         f"wrote {args.out}, {args.null_out}, {args.dictionary_out} "
         f"({profile.docs_scanned:,} docs)"
+    )
+    return 0
+
+
+def _load_mongo(args: argparse.Namespace) -> int:
+    settings = Settings.from_env()
+    result = load_tar(
+        _resolve_path(args.path),
+        settings,
+        limit=args.limit or args.sample_size,
+        progress_every=args.progress_every,
+    )
+    print(
+        f"scanned={result.docs_scanned:,} inserted={result.inserted:,} "
+        f"duplicates={result.duplicates:,} mongo_count={result.mongo_count:,} "
+        f"completed={result.completed_member} disk_stop={result.stopped_for_disk} "
+        f"elapsed={result.elapsed_seconds:.1f}s"
+    )
+    if result.completed_member:
+        print(f"ip counts: {result.ip_count_path} ({result.distinct_ips:,} distinct)")
+        print(f"product seed: {result.product_seed_path} ({result.detail_products:,} detail urls)")
+    return 0 if not result.stopped_for_disk else 2
+
+
+def _enrich_ip(args: argparse.Namespace) -> int:
+    coverage = load_ip_geo(
+        Settings.from_env(),
+        counts_path=args.counts,
+        checkout_path=args.checkout_counts,
+        out_md=args.out,
+    )
+    print(
+        f"public resolve {coverage.resolved_pct:.2f}% "
+        f"checkout_success {coverage.checkout_pct:.2f}% "
+        f"wrote {args.out}"
+    )
+    return 0
+
+
+def _enrich_crawl(args: argparse.Namespace) -> int:
+    result = crawl_seed(
+        Settings.from_env(),
+        seed_path=args.seed,
+        limit=args.limit,
+        out_md=args.out,
+    )
+    print(
+        f"attempted={result.attempted} http_200={result.http_200} "
+        f"parsed={result.parsed} ({result.parse_rate:.2f}%) wrote {args.out}"
     )
     return 0
 

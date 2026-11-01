@@ -42,6 +42,26 @@ Test:
 python3 -m unittest discover -s tests
 ```
 
-## Chưa làm
+## Mongo local (không cloud)
 
-- `uv sync`, Mongo, load 41M, IP lookup, crawl. Chỉ bắt đầu sau khi `docs/scope_confirmation.md` được xác nhận GO.
+Binary người dùng, không cần sudo. Dữ liệu nằm trong `data/mongo` (gitignored).
+
+```bash
+mkdir -p data/mongo
+~/.local/mongodb/bin/mongod \
+  --dbpath data/mongo \
+  --bind_ip 127.0.0.1 \
+  --port 27017 \
+  --wiredTigerCacheSizeGB 1
+```
+
+`.env` trỏ `MONGO_URI=mongodb://127.0.0.1:27017/`.
+
+```bash
+uv sync
+uv run python -m src.cli ingest load-mongo
+uv run python -m src.cli enrich ip
+uv run python -m src.cli enrich crawl --limit 100
+```
+
+`load-mongo` đọc tar một lần, ghi `glamira_raw`, rồi ghi tần suất IP và danh sách URL sản phẩm. `_id` là ObjectId gốc nên chạy lại không nhân bản.

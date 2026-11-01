@@ -1,6 +1,6 @@
 # Scope confirmation — Phase 0
 
-Trạng thái: **đề xuất GO** cho IP geolocation và product crawl. Chưa được xác nhận. Không dựng Mongo, không crawl, không GCP cho đến khi mục xác nhận bên dưới được tick.
+Trạng thái: **đã xác nhận GO** (bốn mục bên dưới). Cloud (GCS, BigQuery) làm sau. Bước đang làm: Mongo local, nạp raw, IP lookup, crawl pilot.
 
 Bằng chứng số liệu: `docs/data_quality_report.md` và `docs/null_profile.md`, một lần đọc hết `summary.bson` (41,432,473 document, 0 lỗi parse, 0 byte dư).
 
@@ -34,8 +34,8 @@ GO vì gần như mọi event, kể cả 26,079 `checkout_success`, có IPv4 pub
 Giả định:
 
 - `time_stamp` là UTC. Country lấy từ IP, không lấy từ TLD (`glamira.de` không đồng nghĩa khách ở Đức).
-- Doanh thu = tổng `cart_products[].price` của `checkout_success`, **tách theo `currency`**. Không tự quy đổi FX trong P05.
-- Coverage bắt buộc ở checkpoint 8: `% event có ip`, `% lookup thành công`, top 10 country. Ngưỡng chưa chốt; nếu country hit < 95% trên `checkout_success` thì dừng và báo lại.
+- Doanh thu = tổng `cart_products[].price` của `checkout_success`, **tách theo** `currency`. Không tự quy đổi FX trong P05.
+- Coverage bắt buộc ở checkpoint 8: `% event có ip`, `% lookup thành công`, top 10 country. Nếu country hit < 95% trên `checkout_success` thì dừng. Kết quả đo được: **99.16%** (25,860 / 26,079), xem `docs/ip_coverage.md`.
 
 ## Product id → name / category — GO
 
@@ -77,9 +77,9 @@ GCS, Cloud Function, BigQuery, dbt, Looker, PostgreSQL, data Project 03–04.
 
 ## Xác nhận
 
-- [ ] GO IP geolocation với BIN 2016, bỏ IPv6/private, country là metric chính, city là best-effort.
-- [ ] GO product crawl qua canonical `glamira.co.uk`, pilot 100 trước, rate limit 1 request/giây.
-- [ ] Chấp nhận khoảng dữ liệu 2020-04-01 → 2020-06-04 thay cho Oct–Nov 2019 trên tên file.
-- [ ] Doanh thu tách theo `currency`, không tự FX.
+- [x] GO IP geolocation với BIN 2016, bỏ IPv6/private, country là metric chính, city là best-effort.
+- [x] GO product crawl qua canonical `glamira.co.uk`, pilot 100 trước, rate limit 1 request/giây.
+- [x] Chấp nhận khoảng dữ liệu 2020-04-01 → 2020-06-04 thay cho Oct–Nov 2019 trên tên file.
+- [x] Doanh thu tách theo `currency`, không tự FX.
 
 Sau khi tick, bước kế tiếp là môi trường `uv` và Mongo local. Chưa làm trong lần này.

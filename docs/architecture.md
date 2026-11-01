@@ -44,6 +44,12 @@ Dashboard cần `country`/`city` và `product_name`/`category`. Raw event không
 
 Canonical crawl host dự kiến `https://www.glamira.co.uk`, nhưng event thật đi nhiều TLD. Giả định và quyết định GO nằm trong `docs/scope_confirmation.md`.
 
+## Mongo local
+
+Không nhét country vào từng event. `ip_geo` giữ một dòng cho mỗi IP. Dashboard join `glamira_raw.ip` với `ip_geo._id`. 3.2 triệu IP thay vì ghi lại 41 triệu lần.
+
+`_id` của event là ObjectId trong file BSON. Load lại thì Mongo từ chối bản trùng, không nhân đôi.
+
 ## Đã đo (full scan)
 
 - 41,432,473 BSON document, 0 lỗi parse, member `summary.bson` 31.23 GB, leftover 0.

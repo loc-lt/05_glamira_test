@@ -11,14 +11,15 @@ Scan: **full member**. Yêu cầu: entire member. Documents: **41,432,473**. Th�
 | `glamira_ubl_oct2019_nov2019.tar.gz` | gzip ustar, mongodump Countly |
 | `dump/countly/summary.metadata.json` | options + indexes của collection nguồn |
 | `dump/countly/summary.bson` | BSON documents, nối tiếp nhau |
-| `IP-COUNTRY-REGION-CITY.BIN` | IP2Location-style BIN, chưa dùng ở Phase 0 |
+| `data/reference/IP-COUNTRY-REGION-CITY.BIN` | IP2Location DB3. Tra IP → country, region, city |
 
-## Collection dự kiến (chưa load)
+## Collection trên Mongo local
 
 | Tên | Trạng thái | Ghi chú |
 |---|---|---|
-| `glamira.glamira_raw` | chưa load | một document = một event |
-| `glamira.products_catalog` | chưa crawl | checkpoint 11 |
+| `glamira.glamira_raw` | 41,432,473 document | Một event. `_id` là ObjectId gốc. Index: `collection`, `time_stamp`, `ip`, `product_id`, `viewing_product_id` |
+| `glamira.ip_geo` | 3,239,628 document | Một IP. `_id` là chuỗi IP. Join `glamira_raw.ip` = `ip_geo._id`. Field: `country_code`, `country_name`, `region`, `city`, `status`, `events` |
+| `glamira.products_catalog` | pilot bị 403 | `product_id`, `url`, `name`, `category`, `http_status`, `crawled_at` |
 
 Đừng map field `collection` thành tên collection Mongo.
 
