@@ -1,0 +1,10 @@
+[project]
+name = "glamira-datasource"
+version = "0.1.0"
+description = "Glamira Project 05 — data source exploration, ingest, and enrichment"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.uv]
+package = false

@@ -1,0 +1,47 @@
+# Runbook
+
+Chạy mọi lệnh từ root repo. Phase 0 dùng thư viện chuẩn của Python 3.12, chưa cần `uv` hay Mongo.
+
+## Dữ liệu local
+
+Archive và BIN không nằm trong git. Trỏ tới file coach đã giao:
+
+```bash
+cp .env.example .env
+# sửa DATA_TAR_PATH và IP_BIN_PATH thành đường dẫn thật
+```
+
+Hoặc truyền `--path` mỗi lần chạy.
+
+## Phase 0
+
+Smoke 500k document:
+
+```bash
+python3 -m src.cli explore null-profile \
+  --path /path/to/glamira_ubl_oct2019_nov2019.tar.gz \
+  --sample-size 500000 \
+  --out docs/null_profile.md
+```
+
+Quét cả member (báo cáo đã sinh ngày 2026-11-01: **41,432,473** document, khoảng 43 phút, ~15.9k docs/s). Một lần chạy ghi null profile, quality report, dictionary draft và JSON local (gitignored):
+
+```bash
+python3 -m src.cli explore quality-report \
+  --path /path/to/glamira_ubl_oct2019_nov2019.tar.gz \
+  --sample-size 0 \
+  --out docs/data_quality_report.md \
+  --null-out docs/null_profile.md \
+  --dictionary-out docs/data_dictionary.md \
+  --stats-out data/staging/profile_stats.json
+```
+
+Test:
+
+```bash
+python3 -m unittest discover -s tests
+```
+
+## Chưa làm
+
+- `uv sync`, Mongo, load 41M, IP lookup, crawl. Chỉ bắt đầu sau khi `docs/scope_confirmation.md` được xác nhận GO.
