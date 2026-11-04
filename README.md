@@ -12,9 +12,9 @@ Pipeline **Data Source** cho Glamira. Repo này không dựng GCS, BigQuery, dbt
 | 4–5 | `uv sync` | `.venv`, `uv.lock` |
 | 6–7 | Mongo local + load raw | `glamira_raw` = 41,432,473, khớp nguồn |
 | 8 | IP geolocation | `docs/ip_coverage.md` — checkout_success resolve 99.16% |
-| 9 | Product URL seed | 19,093 URL canonical, file local `data/exports/product_urls.csv` |
-| 10 | Crawl pilot | Site trả 403. Dừng, chưa đủ 95% |
-| 11 | Crawl full | Chưa chạy, vì pilot bị chặn |
+| 9 | Product URL seed | `enrich extract-products`. Không rút URL trong lúc nạp |
+| 10 | Crawl pilot | `docs/crawl_pilot.md` — 96/97 trang có tên trên seed cũ. Mẫu field đủ: `docs/product_sample.md` |
+| 11 | Crawl full | Chưa chạy |
 
 ## Dữ liệu
 
@@ -28,6 +28,8 @@ uv sync
 uv run python -m unittest discover -s tests
 uv run python -m src.cli ingest load-mongo
 uv run python -m src.cli enrich ip
+uv run python -m src.cli enrich extract-products
+uv run python -m src.cli enrich crawl --limit 100
 ```
 
 Cloud chưa làm. Chi tiết lệnh: `docs/runbook.md`.

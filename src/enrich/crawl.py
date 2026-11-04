@@ -1,23 +1,38 @@
 """Fetch a small number of canonical product pages and store name plus category.
 
-One request per second. The pilot stops at `--limit` (100 for the acceptance run).
+Opens the installed Google Chrome through Playwright, one page at a time.
+The pilot stops at `--limit` (100 for the acceptance run).
 """
 
 from __future__ import annotations
 
 import csv
 import json
+import os
+import random
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-import httpx
 from bs4 import BeautifulSoup
+from playwright.sync_api import Browser, Page, Playwright, sync_playwright
 from pymongo import UpdateOne
+from pymongo.collection import Collection
 
 from src.config import Settings
 from src.db import get_client
+
+_CHROME_CANDIDATES = (
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+)
+_BLOCKED_NAMES = frozenset({"access denied", "forbidden", "just a moment"})
+_FLUSH_EVERY = 10
 
 
 @dataclass
@@ -34,10 +49,21 @@ class CrawlResult:
         return 100.0 * self.parsed / self.attempted
 
 
-def parse_product_html(html: str) -> tuple[str | None, str | None]:
-    """Return `(name, category)` from JSON-LD, then h1 and breadcrumbs."""
+@dataclass(frozen=True)
+class ProductPage:
+    name: str | None = None
+    category: str | None = None
+    price: str | None = None
+    description: str | None = None
+    image_url: str | None = None
+
+
+def parse_product_html(html: str) -> ProductPage:
+    """Read the product fields from JSON-LD, then h1 and breadcrumbs."""
     soup = BeautifulSoup(html, "html.parser")
-    name, category = _from_json_ld(soup)
+    page = _from_json_ld(soup)
+    name = page.name
+    category = page.category
     if not name:
         heading = soup.select_one("h1")
         if heading is not None:
@@ -49,7 +75,13 @@ def parse_product_html(html: str) -> tuple[str | None, str | None]:
         ]
         crumbs = [item for item in crumbs if item and item.lower() not in {"home", "glamira"}]
         category = crumbs[-1] if crumbs else None
-    return name, category
+    return ProductPage(
+        name=name,
+        category=category,
+        price=page.price,
+        description=page.description,
+        image_url=page.image_url,
+    )
 
 
 def crawl_seed(
@@ -62,6 +94,8 @@ def crawl_seed(
     rows = _read_seed(seed_path, limit)
     client = get_client(settings)
     catalog = client[settings.mongo_db][settings.mongo_collection_products]
+    named = _named_ids(catalog)
+    pending = [row for row in rows if row[0] not in named]
     delay = 1.0 / settings.crawl_rate_limit_per_sec if settings.crawl_rate_limit_per_sec else 0.0
     started = time.perf_counter()
     http_200 = 0
@@ -70,75 +104,190 @@ def crawl_seed(
         "# Crawl pilot",
         "",
         f"Limit: {limit}. Rate: {settings.crawl_rate_limit_per_sec} request/s.",
+        f"Skipped {len(rows) - len(pending)} products that already have a name.",
         "",
-        "| product_id | status | parsed | url |",
-        "|---|---:|---|---|",
+        "| product_id | status | name | category | price | url |",
+        "|---|---:|---|---|---|---|",
     ]
+    probe = _probe_http(pending[0][1], settings.crawl_user_agent) if pending else None
+    lines.insert(3, f"HTTP GET probe: {probe if probe is not None else 'not run'}.")
     ops: list[UpdateOne] = []
-    with httpx.Client(
-        headers={
-            "User-Agent": settings.crawl_user_agent,
-            "Accept": "text/html,application/xhtml+xml",
-            "Accept-Language": "en-GB,en;q=0.9",
-        },
-        follow_redirects=True,
-        timeout=30.0,
-    ) as http:
-        for index, (product_id, url) in enumerate(rows):
+    playwright = sync_playwright().start()
+    browser: Browser | None = None
+    try:
+        browser = _launch_chrome(playwright)
+        page = browser.new_page()
+        print(f"[crawl] pending {len(pending)}", flush=True)
+        for index, (product_id, url) in enumerate(pending):
             if index:
-                time.sleep(delay)
-            status, name, category, error = _fetch_one(http, url)
+                time.sleep(random.uniform(1.5, 4.2) if delay else 0.0)
+            status, parsed_page, error = _fetch_one(page, url)
+            if status == 0:
+                page = _replace_page(browser, page)
+                time.sleep(2)
+                status, parsed_page, error = _fetch_one(page, url)
+            print(
+                f"[crawl] {index + 1}/{len(pending)} {product_id} "
+                f"status={status} name={parsed_page.name or ''} err={error or ''}",
+                flush=True,
+            )
             if status == 200:
                 http_200 += 1
-            ok = bool(name)
-            if ok:
+            if parsed_page.name:
                 parsed += 1
-            lines.append(f"| `{product_id}` | {status} | {ok} | `{url}` |")
-            ops.append(
-                UpdateOne(
-                    {"_id": product_id},
-                    {
-                        "$set": {
-                            "product_id": product_id,
-                            "url": url,
-                            "name": name,
-                            "category": category,
-                            "http_status": status,
-                            "error": error,
-                            "crawled_at": datetime.now(timezone.utc),
-                        }
-                    },
-                    upsert=True,
-                )
+            lines.append(
+                f"| `{product_id}` | {status} | {_cell(parsed_page.name)} | "
+                f"{_cell(parsed_page.category)} | {_cell(parsed_page.price)} | `{url}` |"
             )
+            ops.append(_catalog_op(product_id, url, parsed_page, status, error))
+            if len(ops) >= _FLUSH_EVERY:
+                _flush_catalog(catalog, ops)
+                ops.clear()
+                _write_report(out_md, lines, len(pending), http_200, parsed, finished=False)
+                print(
+                    f"[crawl] saved {index + 1}/{len(pending)} parsed={parsed}",
+                    flush=True,
+                )
+    except KeyboardInterrupt:
+        print("[crawl] interrupted; saving pages already fetched", flush=True)
+    finally:
+        _flush_catalog(catalog, ops)
+        ops.clear()
+        if browser is not None:
+            browser.close()
+        playwright.stop()
+        _write_report(out_md, lines, len(pending), http_200, parsed, finished=True)
+    elapsed = time.perf_counter() - started
+    return CrawlResult(attempted=len(pending), http_200=http_200, parsed=parsed, elapsed_seconds=elapsed)
+
+
+def _named_ids(catalog: Collection) -> set[str]:
+    found: set[str] = set()
+    for doc in catalog.find({"name": {"$type": "string"}}, {"_id": 1, "name": 1}):
+        name = doc.get("name")
+        if isinstance(name, str) and name.strip():
+            found.add(str(doc["_id"]))
+    return found
+
+
+def _catalog_op(
+    product_id: str,
+    url: str,
+    parsed_page: ProductPage,
+    status: int,
+    error: str | None,
+) -> UpdateOne:
+    return UpdateOne(
+        {"_id": product_id},
+        {
+            "$set": {
+                "product_id": product_id,
+                "url": url,
+                "source_url": url,
+                "name": parsed_page.name,
+                "category": parsed_page.category,
+                "price": parsed_page.price,
+                "description": parsed_page.description,
+                "image_url": parsed_page.image_url,
+                "http_status": status,
+                "error": error,
+                "crawled_at": datetime.now(timezone.utc),
+            }
+        },
+        upsert=True,
+    )
+
+
+def _flush_catalog(catalog: Collection, ops: list[UpdateOne]) -> None:
     if ops:
         catalog.bulk_write(ops, ordered=False)
-    elapsed = time.perf_counter() - started
-    result = CrawlResult(attempted=len(rows), http_200=http_200, parsed=parsed, elapsed_seconds=elapsed)
-    lines.extend(
+
+
+def _write_report(
+    path: str,
+    lines: list[str],
+    attempted: int,
+    http_200: int,
+    parsed: int,
+    *,
+    finished: bool,
+) -> None:
+    rate = 100.0 * parsed / attempted if attempted else 0.0
+    body = list(lines)
+    body.extend(
         [
             "",
-            f"Attempted {result.attempted}. HTTP 200: {result.http_200}. "
-            f"Name parsed: {result.parsed} ({result.parse_rate:.2f}%).",
+            f"Attempted {attempted}. HTTP 200: {http_200}. Name parsed: {parsed} ({rate:.2f}%).",
+            "",
+            "Client: installed Google Chrome via Playwright, one page at a time.",
+            "Mongo writes every 10 pages, including when the run stops early.",
             "",
         ]
     )
-    Path(out_md).write_text("\n".join(lines), encoding="utf-8")
-    return result
+    if not finished:
+        body.append("Run still in progress.")
+        body.append("")
+    Path(path).write_text("\n".join(body), encoding="utf-8")
 
 
-def _fetch_one(http: httpx.Client, url: str) -> tuple[int, str | None, str | None, str | None]:
+def _chrome_path() -> str:
+    override = os.environ.get("CHROME_PATH", "").strip()
+    candidates = (override, *_CHROME_CANDIDATES) if override else _CHROME_CANDIDATES
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            return candidate
+    raise RuntimeError("google-chrome not found. Set CHROME_PATH to the Chrome binary.")
+
+
+def _launch_chrome(playwright: Playwright) -> Browser:
+    return playwright.chromium.launch(
+        executable_path=_chrome_path(),
+        headless=False,
+    )
+
+
+def _replace_page(browser: Browser, page: Page) -> Page:
+    """Open a new tab after a dropped connection so the next try is not stuck on it."""
     try:
-        response = http.get(url)
-    except httpx.HTTPError as exc:
-        return 0, None, None, type(exc).__name__
-    name, category = (None, None)
-    if response.status_code == 200 and "html" in response.headers.get("content-type", ""):
-        name, category = parse_product_html(response.text)
-    return response.status_code, name, category, None
+        page.close()
+    except Exception:
+        pass
+    return browser.new_page()
 
 
-def _from_json_ld(soup: BeautifulSoup) -> tuple[str | None, str | None]:
+def _cell(value: str | None) -> str:
+    if not value:
+        return ""
+    return value.replace("|", "/")
+
+
+def _fetch_one(page: Page, url: str) -> tuple[int, ProductPage, str | None]:
+    empty = ProductPage()
+    try:
+        response = page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+    except Exception as exc:
+        return 0, empty, f"{type(exc).__name__}: {exc}"[:180]
+    status = response.status if response is not None else 0
+    if status != 200:
+        return status, empty, None
+    parsed_page = parse_product_html(page.content())
+    if parsed_page.name is not None and parsed_page.name.casefold() in _BLOCKED_NAMES:
+        return status, empty, "blocked"
+    return status, parsed_page, None
+
+
+def _probe_http(url: str, user_agent: str) -> int:
+    request = urllib.request.Request(url, headers={"User-Agent": user_agent})
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return int(response.status)
+    except urllib.error.HTTPError as exc:
+        return int(exc.code)
+    except urllib.error.URLError:
+        return 0
+
+
+def _from_json_ld(soup: BeautifulSoup) -> ProductPage:
     for node in soup.select("script[type='application/ld+json']"):
         try:
             payload = json.loads(node.get_text())
@@ -149,14 +298,19 @@ def _from_json_ld(soup: BeautifulSoup) -> tuple[str | None, str | None]:
             types = kind if isinstance(kind, list) else [kind]
             if "Product" not in types:
                 continue
-            name = item.get("name")
             category = item.get("category")
             if isinstance(category, list):
                 category = category[-1] if category else None
             if isinstance(category, dict):
                 category = category.get("name")
-            return _text(name), _text(category)
-    return None, None
+            return ProductPage(
+                name=_text(item.get("name")),
+                category=_text(category),
+                price=_price(item.get("offers")),
+                description=_text(item.get("description")),
+                image_url=_image(item.get("image")),
+            )
+    return ProductPage()
 
 
 def _walk_ld(payload: object) -> list[dict]:
@@ -169,14 +323,36 @@ def _walk_ld(payload: object) -> list[dict]:
         nested = payload.get("@graph")
         if isinstance(nested, list):
             return _walk_ld(nested)
-        return [payload]
+        found = [payload]
+        main = payload.get("mainEntity")
+        if main is not None:
+            found.extend(_walk_ld(main))
+        return found
     return []
 
 
 def _text(value: object) -> str | None:
     if isinstance(value, str) and value.strip():
         return value.strip()
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
     return None
+
+
+def _price(offers: object) -> str | None:
+    if isinstance(offers, list):
+        offers = offers[0] if offers else None
+    if isinstance(offers, dict):
+        return _text(offers.get("price"))
+    return None
+
+
+def _image(value: object) -> str | None:
+    if isinstance(value, list):
+        return _image(value[0]) if value else None
+    if isinstance(value, dict):
+        return _text(value.get("url") or value.get("contentUrl"))
+    return _text(value)
 
 
 def _read_seed(path: str, limit: int) -> list[tuple[str, str]]:

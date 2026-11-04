@@ -52,8 +52,8 @@ class Settings:
             mongo_uri=_env("MONGO_URI"),
             mongo_db=_env("MONGO_DB", "glamira") or "glamira",
             mongo_collection_raw=_env("MONGO_COLLECTION_RAW", "glamira_raw") or "glamira_raw",
-            mongo_collection_products=_env("MONGO_COLLECTION_PRODUCTS", "products_catalog")
-            or "products_catalog",
+            mongo_collection_products=_env("MONGO_COLLECTION_PRODUCTS", "products")
+            or "products",
             ingest_batch_size=int(_env("INGEST_BATCH_SIZE", "10000") or "10000"),
             crawl_rate_limit_per_sec=float(_env("CRAWL_RATE_LIMIT_PER_SEC", "1.0") or "1.0"),
             crawl_base_url=_env("CRAWL_BASE_URL", "https://www.glamira.co.uk")

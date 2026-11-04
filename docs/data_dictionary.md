@@ -19,7 +19,7 @@ Scan: **full member**. Yêu cầu: entire member. Documents: **41,432,473**. Th�
 |---|---|---|
 | `glamira.glamira_raw` | 41,432,473 document | Một event. `_id` là ObjectId gốc. Index: `collection`, `time_stamp`, `ip`, `product_id`, `viewing_product_id` |
 | `glamira.ip_geo` | 3,239,628 document | Một IP. `_id` là chuỗi IP. Join `glamira_raw.ip` = `ip_geo._id`. Field: `country_code`, `country_name`, `region`, `city`, `status`, `events` |
-| `glamira.products_catalog` | pilot bị 403 | `product_id`, `url`, `name`, `category`, `http_status`, `crawled_at` |
+| `glamira.products` | mẫu đã crawl | Một `product_id` một document. Field: `name`, `category`, `price`, `description`, `image_url`, `url`, `http_status`, `crawled_at`. Collection cũ `products_catalog` không còn được ghi. |
 
 Đừng map field `collection` thành tên collection Mongo.
 

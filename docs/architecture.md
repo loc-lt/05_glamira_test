@@ -12,7 +12,7 @@ Phase 0  stream scan → null profile, quality report, scope
 Phase 1  MongoDB glamira.glamira_raw          (sau khi scope GO)
         │
         ▼
-Phase 2  geo fields + products_catalog
+Phase 2  ip_geo + products
         │
         ▼
 handoff  docs/handoff_to_project06.md         (chưa viết)
@@ -40,7 +40,7 @@ Index trong `summary.metadata.json`: `_id`, `time_stamp` (-1), `device_id`.
 Dashboard cần `country`/`city` và `product_name`/`category`. Raw event không có các field đó.
 
 - IP → BIN (checkpoint 8), chỉ IP public.
-- Product → `product_id` (và id trong `cart_products`) + URL `.html` trên `current_url` (checkpoint 9–11).
+- Product → một URL `.html` cho mỗi `product_id`, rút sau khi nạp xong bằng `enrich extract-products`, rồi crawl vào `products`.
 
 Canonical crawl host dự kiến `https://www.glamira.co.uk`, nhưng event thật đi nhiều TLD. Giả định và quyết định GO nằm trong `docs/scope_confirmation.md`.
 
@@ -54,4 +54,4 @@ Không nhét country vào từng event. `ip_geo` giữ một dòng cho mỗi IP.
 
 - 41,432,473 BSON document, 0 lỗi parse, member `summary.bson` 31.23 GB, leftover 0.
 - `time_stamp`: 2020-04-01 → 2020-06-04 UTC. Không dùng khoảng Oct–Nov 2019 trên tên file.
-- IP public IPv4: 99.98%. BIN là DB3 IPv4 ngày 2016-11-29, chưa lookup.
+- IP public IPv4: 99.98%. BIN là DB3 IPv4 ngày 2016-11-29. Tra xong: `docs/ip_coverage.md`.

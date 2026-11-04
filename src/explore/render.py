@@ -298,7 +298,7 @@ def render_data_dictionary(profile: Profile) -> str:
         "| Tên | Trạng thái | Ghi chú |",
         "|---|---|---|",
         "| `glamira.glamira_raw` | chưa load | một document = một event |",
-        "| `glamira.products_catalog` | chưa crawl | checkpoint 11 |",
+        "| `glamira.products` | chưa crawl | checkpoint 11 |",
         "",
         "Đừng map field `collection` thành tên collection Mongo.",
         "",

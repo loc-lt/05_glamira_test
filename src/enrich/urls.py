@@ -19,8 +19,8 @@ def normalize_product_id(value: object) -> str:
     return text
 
 
-def canonical_product_url(url: str, base_url: str) -> str | None:
-    """Keep the product path and force the agreed host, dropping query strings."""
+def product_page_url(url: str) -> str | None:
+    """Drop the query and keep the store that actually served the page."""
     if not url or ".html" not in url:
         return None
     parts = urlsplit(url.strip())
@@ -34,14 +34,29 @@ def canonical_product_url(url: str, base_url: str) -> str | None:
     path = path[: html_at + len(".html")]
     if not path.startswith("/"):
         path = "/" + path
-    base = base_url.rstrip("/")
-    return f"{base}{path}"
+    return f"https://{host}{path}"
+
+
+def canonical_product_url(url: str, base_url: str) -> str | None:
+    """Drop the query and keep the store host that served the page.
+
+    `base_url` is the host preferred when several stores have the same product.
+    This function does not move a foreign path onto that host: `glamira-riipus-odila`
+    on `.fi` is not a `.co.uk` URL.
+    """
+    if not base_url:
+        return None
+    return product_page_url(url)
 
 
 def prefer_url(current: str | None, candidate: str) -> str:
-    """Prefer an already-canonical .co.uk URL over a translated storefront."""
-    if current is None:
-        return candidate
-    if "glamira.co.uk" in candidate and "glamira.co.uk" not in current:
+    """Prefer a page whose host is already `www.glamira.co.uk`."""
+    if current is None or page_rank(candidate) > page_rank(current):
         return candidate
     return current
+
+
+def page_rank(url: str) -> tuple[int]:
+    """A real `.co.uk` page ranks above the same product on another store."""
+    host = (urlsplit(url).hostname or "").lower()
+    return (int(host == "www.glamira.co.uk"),)

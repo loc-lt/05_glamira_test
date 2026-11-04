@@ -1,8 +1,8 @@
 """Stream summary.bson into `glamira_raw`.
 
 The source ObjectId is the Mongo `_id`, so a second run does not duplicate rows.
-One pass also records IP frequencies and product URLs. Reading the 5 GB gzip
-twice would add another ~40 minutes and is unnecessary.
+The same pass records IP frequencies. Product URLs are a later step
+(`enrich extract-products`), not part of the load.
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ from pymongo.errors import BulkWriteError
 
 from src.config import Settings
 from src.db import get_client
-from src.enrich.urls import canonical_product_url, normalize_product_id, prefer_url
 from src.stream.tar_bson import SummaryDump
 
 _MIN_FREE_BYTES = 8 * 1024 * 1024 * 1024
@@ -35,20 +34,13 @@ class LoadResult:
     elapsed_seconds: float
     stopped_for_disk: bool
     ip_count_path: str
-    product_seed_path: str
     distinct_ips: int
-    detail_products: int
 
 
 @dataclass
 class _Sidecar:
     ip_counts: dict[str, int] = field(default_factory=dict)
-    detail_urls: dict[str, str] = field(default_factory=dict)
-    cart_ids: set[str] = field(default_factory=set)
     checkout_ips: dict[str, int] = field(default_factory=dict)
-    checkout_docs: int = 0
-    checkout_lines: int = 0
-    checkout_lines_with_price: int = 0
 
 
 def load_tar(
@@ -62,7 +54,6 @@ def load_tar(
     collection: str | None = None,
     write_sidecars: bool = True,
     ip_count_path: str = "data/staging/ip_event_counts.tsv",
-    product_seed_path: str = "data/exports/product_urls.csv",
 ) -> LoadResult:
     client = get_client(settings)
     client.admin.command("ping")
@@ -81,7 +72,7 @@ def load_tar(
 
     for raw in dump:
         document = decode_bson(raw)
-        _observe(document, sidecar, settings.crawl_base_url)
+        _observe(document, sidecar)
         batch.append(document)
         scanned += 1
         if len(batch) >= batch_size:
@@ -106,7 +97,6 @@ def load_tar(
         _write_ip_counts(ip_count_path, sidecar.ip_counts)
         checkout_path = str(Path(ip_count_path).with_name("checkout_success_ips.tsv"))
         _write_ip_counts(checkout_path, sidecar.checkout_ips)
-        _write_product_seed(product_seed_path, sidecar, settings.crawl_base_url)
         _ensure_indexes(coll)
     mongo_count = coll.count_documents({}) if (completed or limit or stopped_for_disk) else coll.estimated_document_count()
     return LoadResult(
@@ -118,38 +108,16 @@ def load_tar(
         elapsed_seconds=time.perf_counter() - started,
         stopped_for_disk=stopped_for_disk,
         ip_count_path=ip_count_path if completed else "",
-        product_seed_path=product_seed_path if completed else "",
         distinct_ips=len(sidecar.ip_counts),
-        detail_products=len(sidecar.detail_urls),
     )
 
 
-def _observe(document: dict, sidecar: _Sidecar, base_url: str) -> None:
+def _observe(document: dict, sidecar: _Sidecar) -> None:
     ip = document.get("ip")
     if isinstance(ip, str) and ip:
         sidecar.ip_counts[ip] = sidecar.ip_counts.get(ip, 0) + 1
-    event = document.get("collection")
-    if event == "view_product_detail":
-        product_id = normalize_product_id(document.get("product_id"))
-        url = document.get("current_url")
-        if product_id and isinstance(url, str):
-            canonical = canonical_product_url(url, base_url)
-            if canonical:
-                sidecar.detail_urls[product_id] = prefer_url(sidecar.detail_urls.get(product_id), canonical)
-    elif event == "checkout_success":
-        sidecar.checkout_docs += 1
-        if isinstance(ip, str) and ip:
+        if document.get("collection") == "checkout_success":
             sidecar.checkout_ips[ip] = sidecar.checkout_ips.get(ip, 0) + 1
-        for line in document.get("cart_products") or []:
-            if not isinstance(line, dict):
-                continue
-            sidecar.checkout_lines += 1
-            product_id = normalize_product_id(line.get("product_id"))
-            if product_id:
-                sidecar.cart_ids.add(product_id)
-            price = line.get("price")
-            if isinstance(price, str) and price.strip():
-                sidecar.checkout_lines_with_price += 1
 
 
 def _flush(collection: Collection, batch: list[dict]) -> tuple[int, int]:
@@ -193,42 +161,6 @@ def _write_ip_counts(path: str, counts: dict[str, int]) -> None:
     with destination.open("w", encoding="utf-8") as handle:
         for ip, count in counts.items():
             handle.write(f"{ip}\t{count}\n")
-
-
-def _write_product_seed(path: str, sidecar: _Sidecar, base_url: str) -> None:
-    destination = Path(path)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    missing = sidecar.cart_ids - set(sidecar.detail_urls)
-    with destination.open("w", encoding="utf-8") as handle:
-        handle.write("product_id,canonical_url,has_detail_url,in_checkout_success\n")
-        for product_id, url in sorted(sidecar.detail_urls.items()):
-            in_checkout = "1" if product_id in sidecar.cart_ids else "0"
-            handle.write(f"{product_id},{url},1,{in_checkout}\n")
-        for product_id in sorted(missing):
-            handle.write(f"{product_id},,0,1\n")
-    note = destination.with_suffix(".md")
-    price_pct = (
-        100.0 * sidecar.checkout_lines_with_price / sidecar.checkout_lines
-        if sidecar.checkout_lines
-        else 0.0
-    )
-    note.write_text(
-        "\n".join(
-            [
-                "# Product seed",
-                "",
-                f"- Detail products with a `.html` URL: {len(sidecar.detail_urls):,}",
-                f"- Product ids seen in `checkout_success` carts: {len(sidecar.cart_ids):,}",
-                f"- Checkout ids with no detail URL: {len(missing):,}",
-                f"- `checkout_success` documents: {sidecar.checkout_docs:,}",
-                f"- Cart lines: {sidecar.checkout_lines:,}",
-                f"- Cart lines with a non-empty price: {sidecar.checkout_lines_with_price:,} ({price_pct:.2f}%)",
-                f"- Canonical host: {base_url}",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
 
 
 def _log(scanned: int, inserted: int, duplicates: int, started: float) -> None:

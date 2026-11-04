@@ -293,7 +293,7 @@ Public = IPv4 unicast không thuộc dải private/loopback/link-local/multicast
 
 ## 10. Product linkage
 
-- Document có `cart_products` không rỗng hoặc không null: 457,696
+- Document có `cart_prớc code lấy path của store khác rồi gắn host www.glamira.co.uk. 100045 vì vậy thành glamira-riipus-odila.html, trong khi log chỉ có path đó trên www.glamira.fi.oducts` không rỗng hoặc không null: 457,696
 - Trong đó có `product_id` bên trong phần tử: 364,982
 
 Một document được tính là có product link khi top-level `product_id` hoặc `viewing_product_id` non-empty, hoặc cart có `product_id`.

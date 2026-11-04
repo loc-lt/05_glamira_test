@@ -61,7 +61,10 @@ mkdir -p data/mongo
 uv sync
 uv run python -m src.cli ingest load-mongo
 uv run python -m src.cli enrich ip
+uv run python -m src.cli enrich extract-products
 uv run python -m src.cli enrich crawl --limit 100
 ```
 
-`load-mongo` đọc tar một lần, ghi `glamira_raw`, rồi ghi tần suất IP và danh sách URL sản phẩm. `_id` là ObjectId gốc nên chạy lại không nhân bản.
+Lệnh crawl mở Google Chrome đã cài trên máy và nghỉ ngẫu nhiên khoảng 1,5–4,2 giây giữa hai trang.
+
+`load-mongo` chỉ ghi `glamira_raw` và tần suất IP. URL sản phẩm là lệnh `extract-products`, chạy sau khi nạp xong. `_id` là ObjectId gốc nên chạy lại không nhân bản.
