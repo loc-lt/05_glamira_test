@@ -19,6 +19,11 @@ def normalize_product_id(value: object) -> str:
     return text
 
 
+def catalog_product_url(product_id: str) -> str:
+    """Magento path the coach gave for a product whose storefront page is missing."""
+    return f"https://www.glamira.com/catalog/product/view/id/{product_id}"
+
+
 def product_page_url(url: str) -> str | None:
     """Drop the query and keep the store that actually served the page."""
     if not url or ".html" not in url:

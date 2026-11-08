@@ -24,6 +24,7 @@ from pymongo.collection import Collection
 
 from src.config import Settings
 from src.db import get_client
+from src.enrich.urls import catalog_product_url
 
 _CHROME_CANDIDATES = (
     "/usr/bin/google-chrome",
@@ -31,7 +32,7 @@ _CHROME_CANDIDATES = (
     "/usr/bin/chromium",
     "/usr/bin/chromium-browser",
 )
-_BLOCKED_NAMES = frozenset({"access denied", "forbidden", "just a moment"})
+_BLOCKED_NAMES = frozenset({"access denied", "forbidden", "just a moment", "oops", "oops!"})
 _FLUSH_EVERY = 10
 
 
@@ -54,8 +55,17 @@ class ProductPage:
     name: str | None = None
     category: str | None = None
     price: str | None = None
+    currency: str | None = None
     description: str | None = None
     image_url: str | None = None
+    brand: str | None = None
+    sku: str | None = None
+    material: str | None = None
+    color: str | None = None
+    availability: str | None = None
+    gtin: str | None = None
+    mpn: str | None = None
+    weight: str | None = None
 
 
 def parse_product_html(html: str) -> ProductPage:
@@ -79,8 +89,17 @@ def parse_product_html(html: str) -> ProductPage:
         name=name,
         category=category,
         price=page.price,
+        currency=page.currency,
         description=page.description,
         image_url=page.image_url,
+        brand=page.brand,
+        sku=page.sku,
+        material=page.material,
+        color=page.color,
+        availability=page.availability,
+        gtin=page.gtin,
+        mpn=page.mpn,
+        weight=page.weight,
     )
 
 
@@ -126,9 +145,20 @@ def crawl_seed(
                 page = _replace_page(browser, page)
                 time.sleep(2)
                 status, parsed_page, error = _fetch_one(page, url)
+            fetched_url = url
+            if status != 0 and not _usable(parsed_page):
+                fallback = catalog_product_url(product_id)
+                if fallback != url:
+                    time.sleep(random.uniform(1.5, 4.2) if delay else 0.0)
+                    fb_status, fb_page, fb_error = _fetch_one(page, fallback)
+                    if _usable(fb_page):
+                        status, parsed_page, error = fb_status, fb_page, fb_error
+                        fetched_url = fallback
+                    elif status == 404:
+                        error = f"fallback {fb_status}"
             print(
                 f"[crawl] {index + 1}/{len(pending)} {product_id} "
-                f"status={status} name={parsed_page.name or ''} err={error or ''}",
+                f"status={status} name={parsed_page.name or ''} url={fetched_url} err={error or ''}",
                 flush=True,
             )
             if status == 200:
@@ -137,9 +167,9 @@ def crawl_seed(
                 parsed += 1
             lines.append(
                 f"| `{product_id}` | {status} | {_cell(parsed_page.name)} | "
-                f"{_cell(parsed_page.category)} | {_cell(parsed_page.price)} | `{url}` |"
+                f"{_cell(parsed_page.category)} | {_cell(parsed_page.price)} | `{fetched_url}` |"
             )
-            ops.append(_catalog_op(product_id, url, parsed_page, status, error))
+            ops.append(_catalog_op(product_id, fetched_url, url, parsed_page, status, error))
             if len(ops) >= _FLUSH_EVERY:
                 _flush_catalog(catalog, ops)
                 ops.clear()
@@ -170,9 +200,14 @@ def _named_ids(catalog: Collection) -> set[str]:
     return found
 
 
+def _usable(parsed_page: ProductPage) -> bool:
+    return bool(parsed_page.name)
+
+
 def _catalog_op(
     product_id: str,
     url: str,
+    source_url: str,
     parsed_page: ProductPage,
     status: int,
     error: str | None,
@@ -183,12 +218,21 @@ def _catalog_op(
             "$set": {
                 "product_id": product_id,
                 "url": url,
-                "source_url": url,
+                "source_url": source_url,
                 "name": parsed_page.name,
                 "category": parsed_page.category,
                 "price": parsed_page.price,
+                "currency": parsed_page.currency,
                 "description": parsed_page.description,
                 "image_url": parsed_page.image_url,
+                "brand": parsed_page.brand,
+                "sku": parsed_page.sku,
+                "material": parsed_page.material,
+                "color": parsed_page.color,
+                "availability": parsed_page.availability,
+                "gtin": parsed_page.gtin,
+                "mpn": parsed_page.mpn,
+                "weight": parsed_page.weight,
                 "http_status": status,
                 "error": error,
                 "crawled_at": datetime.now(timezone.utc),
@@ -261,12 +305,26 @@ def _cell(value: str | None) -> str:
     return value.replace("|", "/")
 
 
+_CATALOG_READY = """() => {
+  const title = document.title || '';
+  return title.includes('GLAMIRA') && !title.startsWith('404');
+}"""
+_CATALOG_PRODUCT = """() => [...document.querySelectorAll("script[type='application/ld+json']")]
+  .some(node => (node.textContent || '').includes('Product'));"""
+
+
 def _fetch_one(page: Page, url: str) -> tuple[int, ProductPage, str | None]:
     empty = ProductPage()
     try:
         response = page.goto(url, wait_until="domcontentloaded", timeout=30_000)
     except Exception as exc:
         return 0, empty, f"{type(exc).__name__}: {exc}"[:180]
+    if "/catalog/product/view/" in url:
+        try:
+            page.wait_for_function(_CATALOG_READY, timeout=20_000)
+            page.wait_for_function(_CATALOG_PRODUCT, timeout=10_000)
+        except Exception:
+            pass
     status = response.status if response is not None else 0
     if status != 200:
         return status, empty, None
@@ -303,12 +361,22 @@ def _from_json_ld(soup: BeautifulSoup) -> ProductPage:
                 category = category[-1] if category else None
             if isinstance(category, dict):
                 category = category.get("name")
+            offers = item.get("offers")
             return ProductPage(
                 name=_text(item.get("name")),
                 category=_text(category),
-                price=_price(item.get("offers")),
+                price=_price(offers),
+                currency=_offer_text(offers, "priceCurrency"),
                 description=_text(item.get("description")),
                 image_url=_image(item.get("image")),
+                brand=_brand(item.get("brand")),
+                sku=_text(item.get("sku")),
+                material=_text(item.get("material")),
+                color=_text(item.get("color")),
+                availability=_availability(offers),
+                gtin=_text(item.get("gtin")),
+                mpn=_text(item.get("mpn")),
+                weight=_weight(item.get("weight")),
             )
     return ProductPage()
 
@@ -339,12 +407,49 @@ def _text(value: object) -> str | None:
     return None
 
 
-def _price(offers: object) -> str | None:
+def _offer(offers: object) -> dict | None:
     if isinstance(offers, list):
         offers = offers[0] if offers else None
     if isinstance(offers, dict):
-        return _text(offers.get("price"))
+        return offers
     return None
+
+
+def _price(offers: object) -> str | None:
+    offer = _offer(offers)
+    if offer is None:
+        return None
+    return _text(offer.get("price"))
+
+
+def _offer_text(offers: object, key: str) -> str | None:
+    offer = _offer(offers)
+    if offer is None:
+        return None
+    return _text(offer.get(key))
+
+
+def _availability(offers: object) -> str | None:
+    raw = _offer_text(offers, "availability")
+    if raw is None:
+        return None
+    return raw.rsplit("/", 1)[-1]
+
+
+def _brand(value: object) -> str | None:
+    if isinstance(value, dict):
+        return _text(value.get("name"))
+    return _text(value)
+
+
+def _weight(value: object) -> str | None:
+    if isinstance(value, dict):
+        amount = _text(value.get("value"))
+        unit = _text(value.get("unitText") or value.get("unitCode"))
+        if amount and unit:
+            return f"{amount} {unit}"
+        return amount
+    return _text(value)
 
 
 def _image(value: object) -> str | None:

@@ -5,7 +5,7 @@ from collections import Counter
 
 from src.enrich.crawl import parse_product_html
 from src.enrich.extract_products import _choose, pair_from_document
-from src.enrich.urls import canonical_product_url, normalize_product_id, prefer_url
+from src.enrich.urls import canonical_product_url, catalog_product_url, normalize_product_id, prefer_url
 
 
 class UrlRuleTest(unittest.TestCase):
@@ -72,6 +72,35 @@ class HtmlParserTest(unittest.TestCase):
         page = parse_product_html(html)
         self.assertEqual((page.name, page.category, page.price), ("Griseus", "Rings", "120"))
         self.assertEqual(page.image_url, "https://cdn.example/ring.jpg")
+
+    def test_json_ld_variant_fields(self) -> None:
+        html = """
+        <html><head>
+          <script type="application/ld+json">
+            {"@type": "Product", "name": "Odila", "sku": "100045_41",
+             "material": "14K White Gold", "color": "H", "gtin": "123",
+             "mpn": "ODILA", "weight": {"value": "2.4", "unitText": "g"},
+             "brand": {"@type": "Brand", "name": "Glamira Diamonds"},
+             "offers": {"price": "9818.35", "priceCurrency": "USD",
+                        "availability": "https://schema.org/InStock"}}
+          </script>
+        </head></html>
+        """
+        page = parse_product_html(html)
+        self.assertEqual(page.currency, "USD")
+        self.assertEqual(page.brand, "Glamira Diamonds")
+        self.assertEqual(page.sku, "100045_41")
+        self.assertEqual(page.material, "14K White Gold")
+        self.assertEqual(page.color, "H")
+        self.assertEqual(page.availability, "InStock")
+        self.assertEqual(page.weight, "2.4 g")
+        self.assertEqual((page.gtin, page.mpn), ("123", "ODILA"))
+
+    def test_catalog_fallback_uses_product_id(self) -> None:
+        self.assertEqual(
+            catalog_product_url("102002"),
+            "https://www.glamira.com/catalog/product/view/id/102002",
+        )
 
     def test_product_nested_under_item_page(self) -> None:
         html = """

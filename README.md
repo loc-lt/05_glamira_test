@@ -33,3 +33,5 @@ uv run python -m src.cli enrich crawl --limit 100
 ```
 
 Cloud chưa làm. Chi tiết lệnh: `docs/runbook.md`.
+
+Đọc theo thứ tự: `docs/qua_trinh.md` là cách repo được dựng và cách đọc code. `docs/mongodb.md` là cách xem dữ liệu. Mở Compass chưa đủ: `mongod` phải đang chạy thì app mới đọc được file trong `data/mongo`.
