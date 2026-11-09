@@ -30,7 +30,10 @@ uv run python -m unittest discover -s tests
 uv run python -m src.cli ingest load-mongo
 uv run python -m src.cli enrich ip
 uv run python -m src.cli enrich extract-products
-uv run python -m src.cli enrich crawl --limit 100
+uv run python -m src.cli enrich crawl --limit 100      # --limit 0 = cả seed
+uv run python -m src.cli enrich product-status        # products so với seed
+uv run python -m src.cli enrich export-csv ip_geo     # CSV cạnh Mongo
+uv run python -m src.cli enrich export-csv products
 ```
 
 GCP (bucket, VM Mongo, nạp trên cloud): làm theo `docs/implements.md`, script trong `infra/gcp/`. Lệnh local: `docs/runbook.md`.
