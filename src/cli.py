@@ -62,7 +62,7 @@ def main(argv: list[str] | None = None) -> int:
     extract_cmd.set_defaults(handler=_extract_products)
     crawl_cmd = enrich_cmds.add_parser("crawl", help="Fetch canonical product pages")
     crawl_cmd.add_argument("--seed", default="data/exports/product_urls.csv")
-    crawl_cmd.add_argument("--limit", type=int, default=100)
+    crawl_cmd.add_argument("--limit", type=int, default=100, help="First N seed rows. 0 reads the whole seed.")
     crawl_cmd.add_argument("--out", default="docs/crawl_pilot.md")
     crawl_cmd.set_defaults(handler=_enrich_crawl)
 

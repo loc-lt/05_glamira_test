@@ -469,6 +469,6 @@ def _read_seed(path: str, limit: int) -> list[tuple[str, str]]:
             if not url or not product_id:
                 continue
             rows.append((product_id, url))
-            if len(rows) >= limit:
+            if limit and len(rows) >= limit:
                 break
     return rows
