@@ -24,3 +24,6 @@ data/
 .DS_Store
 .idea/
 .vscode/
+
+# GCP settings for infra/gcp scripts
+infra/gcp/gcp.env
