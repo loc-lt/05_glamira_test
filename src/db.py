@@ -1,4 +1,5 @@
-"""Mongo client. Local mongod has no auth; the URI lives in `.env`."""
+"""Mongo client. The URI lives in `.env`: no auth for local mongod, a user and
+`authSource=admin` for the GCP VM."""
 
 from __future__ import annotations
 

@@ -1,6 +1,7 @@
 """Stream summary.bson into `glamira_raw`.
 
 The source ObjectId is the Mongo `_id`, so a second run does not duplicate rows.
+Each inserted event also gets `_loaded_at` and `_source_file` (coach step 1.3).
 The same pass records IP frequencies. Product URLs are a later step
 (`enrich extract-products`), not part of the load.
 """
@@ -11,6 +12,7 @@ import shutil
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 from bson import decode as decode_bson
@@ -36,6 +38,11 @@ class LoadResult:
     ip_count_path: str
     distinct_ips: int
 
+    @property
+    def count_matches(self) -> bool:
+        """True when the whole member was read and Mongo holds every scanned event."""
+        return self.completed_member and self.mongo_count == self.docs_scanned
+
 
 @dataclass
 class _Sidecar:
@@ -49,7 +56,7 @@ def load_tar(
     *,
     batch_size: int | None = None,
     limit: int = 0,
-    progress_every: int = 200_000,
+    progress_every: int = 100_000,
     database: str | None = None,
     collection: str | None = None,
     write_sidecars: bool = True,
@@ -69,9 +76,11 @@ def load_tar(
     duplicates = 0
     stopped_for_disk = False
     dump = SummaryDump(path)
+    loaded_at = datetime.now(timezone.utc)
+    source_file = Path(path).name
 
     for raw in dump:
-        document = decode_bson(raw)
+        document = stamp(decode_bson(raw), loaded_at, source_file)
         _observe(document, sidecar)
         batch.append(document)
         scanned += 1
@@ -110,6 +119,13 @@ def load_tar(
         ip_count_path=ip_count_path if completed else "",
         distinct_ips=len(sidecar.ip_counts),
     )
+
+
+def stamp(document: dict, loaded_at: datetime, source_file: str) -> dict:
+    """Add the two load-audit fields. Source fields are never overwritten."""
+    document.setdefault("_loaded_at", loaded_at)
+    document.setdefault("_source_file", source_file)
+    return document
 
 
 def _observe(document: dict, sidecar: _Sidecar) -> None:

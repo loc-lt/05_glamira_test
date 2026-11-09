@@ -9,6 +9,7 @@ from pathlib import Path
 
 from src.config import Settings
 from src.enrich.crawl import crawl_seed
+from src.enrich.export_csv import export_collection, product_status
 from src.enrich.extract_products import extract_products
 from src.enrich.ip_lookup import load_ip_geo
 from src.explore.profile import profile_tar
@@ -44,6 +45,7 @@ def main(argv: list[str] | None = None) -> int:
     load_cmd = ingest_cmds.add_parser("load-mongo", help="Stream summary.bson into glamira_raw")
     _add_scan_args(load_cmd)
     load_cmd.add_argument("--limit", type=int, default=0, help="Stop after N documents. 0 loads the member.")
+    load_cmd.set_defaults(progress_every=100_000)
     load_cmd.set_defaults(handler=_load_mongo)
 
     enrich = sub.add_parser("enrich", help="IP lookup and product crawl")
@@ -65,6 +67,13 @@ def main(argv: list[str] | None = None) -> int:
     crawl_cmd.add_argument("--limit", type=int, default=100, help="First N seed rows. 0 reads the whole seed.")
     crawl_cmd.add_argument("--out", default="docs/crawl_pilot.md")
     crawl_cmd.set_defaults(handler=_enrich_crawl)
+    export_cmd = enrich_cmds.add_parser("export-csv", help="Write ip_geo or products to CSV beside Mongo")
+    export_cmd.add_argument("collection", choices=("ip_geo", "products"))
+    export_cmd.add_argument("--out", default=None, help="Defaults to data/exports/<collection>.csv")
+    export_cmd.set_defaults(handler=_export_csv)
+    status_cmd = enrich_cmds.add_parser("product-status", help="Compare products in Mongo with the seed")
+    status_cmd.add_argument("--seed", default="data/exports/product_urls.csv")
+    status_cmd.set_defaults(handler=_product_status)
 
     args = parser.parse_args(argv)
     try:
@@ -148,6 +157,10 @@ def _load_mongo(args: argparse.Namespace) -> int:
     )
     if result.completed_member:
         print(f"ip counts: {result.ip_count_path} ({result.distinct_ips:,} distinct)")
+        verdict = "MATCH" if result.count_matches else "MISMATCH"
+        print(f"count check: source={result.docs_scanned:,} mongo={result.mongo_count:,} {verdict}")
+        if not result.count_matches:
+            return 3
     return 0 if not result.stopped_for_disk else 2
 
 
@@ -198,6 +211,23 @@ def _enrich_crawl(args: argparse.Namespace) -> int:
         f"parsed={result.parsed} ({result.parse_rate:.2f}%) wrote {args.out}"
     )
     return 0
+
+
+def _export_csv(args: argparse.Namespace) -> int:
+    settings = Settings.from_env()
+    out = args.out or f"data/exports/{args.collection}.csv"
+    rows = export_collection(settings, args.collection, out)
+    print(f"wrote {out} ({rows:,} rows)")
+    return 0
+
+
+def _product_status(args: argparse.Namespace) -> int:
+    status = product_status(Settings.from_env(), args.seed)
+    print(
+        f"seed={status.seed:,} products={status.documents:,} named={status.named:,} "
+        f"({status.named_pct:.2f}%) missing_from_mongo={status.missing:,}"
+    )
+    return 0 if status.missing == 0 else 4
 
 
 def _write(path: str, text: str) -> None:
