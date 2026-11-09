@@ -9,7 +9,8 @@ Pipeline **Data Source** cho Glamira. Repo này không dựng GCS, BigQuery, dbt
 | 1 | Null % theo event type | `docs/null_profile.md` — full scan |
 | 2 | Data quality report | `docs/data_quality_report.md` — 41,432,473 document |
 | 3 | Scope confirmation | `docs/scope_confirmation.md` — đã tick GO |
-| 4–5 | `uv sync` | `.venv`, `uv.lock` |
+| 4 | GCP + bucket | `infra/gcp/01_project.sh`, `02_bucket.sh` — xem `docs/implements.md` |
+| 5 | `uv sync` | `.venv`, `uv.lock` |
 | 6–7 | Mongo local + load raw | `glamira_raw` = 41,432,473, khớp nguồn |
 | 8 | IP geolocation | `docs/ip_coverage.md` — checkout_success resolve 99.16% |
 | 9 | Product URL seed | `enrich extract-products`. Không rút URL trong lúc nạp |
@@ -32,6 +33,6 @@ uv run python -m src.cli enrich extract-products
 uv run python -m src.cli enrich crawl --limit 100
 ```
 
-Cloud chưa làm. Chi tiết lệnh: `docs/runbook.md`.
+GCP (bucket, VM Mongo, nạp trên cloud): làm theo `docs/implements.md`, script trong `infra/gcp/`. Lệnh local: `docs/runbook.md`.
 
 Đọc theo thứ tự: `docs/qua_trinh.md` là cách repo được dựng và cách đọc code. `docs/mongodb.md` là cách xem dữ liệu. Mở Compass chưa đủ: `mongod` phải đang chạy thì app mới đọc được file trong `data/mongo`.
